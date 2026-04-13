@@ -1,3 +1,4 @@
+# dmmd4sr_data.py (기존 datasets.py 내용 그대로)
 import random
 import torch
 import os
@@ -11,10 +12,6 @@ import numpy as np
 def DS(i_file, o_file, max_len):
     """
     Dynamic Segmentation operations
-    :param i_file: original data
-    :param o_file: output data
-    :max_len: the max length of the sequence
-    :return:
     """
     with open(i_file, "r+") as fr:
         data = fr.readlines()
