@@ -29,10 +29,9 @@ def main():
     parser = argparse.ArgumentParser(description='ICLRec - MicroVideo (text+image only)')
 
     # ── 데이터 경로 ────────────────────────────────────────────────────
-    parser.add_argument('--interaction_path', type=str, default='kuaishou_preprocess.pkl')
+    parser.add_argument('--interaction_path', type=str, default='interaction.parquet')
     parser.add_argument('--item_path',        type=str, default='item_used.parquet')
     parser.add_argument('--title_npy',        type=str, default='title_emb.npy')
-    parser.add_argument('--image_pt',         type=str, default='image_features.pt')
 
     # ── 출력 ──────────────────────────────────────────────────────────
     parser.add_argument('--output_dir',  type=str, default='output/')
@@ -43,7 +42,7 @@ def main():
     DataModule.add_to_argparse(parser)
 
     # ── 모델 하이퍼파라미터 ───────────────────────────────────────────
-    parser.add_argument('--hidden_size',               type=int,   default=128)
+    parser.add_argument('--hidden_size',               type=int,   default=64)
     parser.add_argument('--num_hidden_layers',         type=int,   default=2)
     parser.add_argument('--num_attention_heads',       type=int,   default=2)
     parser.add_argument('--hidden_act',                type=str,   default='gelu')
@@ -98,7 +97,6 @@ def main():
     text_feat, image_feat, text_dim, image_dim = load_item_features(
         item_path      = args.item_path,
         title_npy_path = args.title_npy,
-        image_pt_path  = args.image_pt,
     )
     args.pretrain_text_dim = text_dim
     args.pretrain_img_dim  = image_dim
