@@ -168,17 +168,18 @@ class DMMD4SRDataset(Dataset):
         assert self.data_type in {"train", "valid", "test"}
 
         if self.data_type == "train":
-            input_ids = items[:-3]
-            target_pos = items[1:-2]
-            
+            input_ids = items[:-2]
+            target_pos = items[1:-1]
+
+            target_pos_ = target_pos
             target_pos = (target_pos, target_pos_)
             answer = [0]
         elif self.data_type == "valid":
-            input_ids = items[:-2]
-            target_pos = items[1:-1]
+            input_ids = items[:-1]
+            target_pos = items[1:]
             answer = [items[-2]]
         else:
-            input_ids = items[:-1]
+            input_ids = items
             target_pos = items[1:]
             answer = [items[-1]]
 
