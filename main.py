@@ -5,7 +5,7 @@ import argparse
 
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
-from datasets import DMMD4SRDataset
+from datasets import DMMD4SRDataset, DS
 
 from trainers import DMMD4SRTrainer
 from models import DMMD4SRModel
@@ -45,11 +45,12 @@ def main():
     # encoder
     parser.add_argument("--num_experts", type=int, default=4, help="number of num_experts")
     parser.add_argument("--diff_loss", type=float, default=0.01)
+    parser.add_argument("--icl_loss", type=float, default=0.001)
 
-    # multi modal
+    # multi modal (text + visual only)
     parser.add_argument("--is_use_mm", type=bool, default=True, help="is use mm embedding")
     parser.add_argument("--is_use_text", type=bool, default=True, help="is use text embedding")
-    parser.add_argument("--is_use_image", type=bool, default=False, help="is use image embedding")
+    parser.add_argument("--is_use_image", type=bool, default=True, help="is use image/visual embedding")
     parser.add_argument("--text_embedding_path", default='../process_data/text_features.pt', type=str)
     parser.add_argument("--image_embedding_path", default='../process_data/image_features.pt', type=str)
     parser.add_argument("--pretrain_emb_dim", type=int, default=512, help="pretrain_emb_dim of clip model")
@@ -66,6 +67,10 @@ def main():
     # loss weight
     parser.add_argument("--rec_weight", type=float, default=1.0, help="weight of recommendation loss")
 
+    # contrastive learning
+    parser.add_argument("--temperature", default=1.0, type=float, help="softmax temperature")
+    parser.add_argument("--sim", default='dot', type=str, help="similarity calculation")
+
     # learning related
     parser.add_argument("--weight_decay", type=float, default=0.0, help="weight_decay of adam")
 
@@ -78,8 +83,15 @@ def main():
     print("Using Cuda:", torch.cuda.is_available())
     
     args.data_file = args.data_dir + args.data_name + ".txt"
+    args.train_data_file = args.data_dir + args.data_name + "_1.txt"
+
+    # Dynamic Segmentation (DS)
+    if not os.path.exists(args.train_data_file):
+        print("Applying Dynamic Segmentation...")
+        DS(args.data_file, args.train_data_file, args.max_seq_length)
 
     # Load data
+    train_user_seq = get_user_seqs(args.train_data_file)
     user_seq, max_item, valid_rating_matrix, test_rating_matrix = get_user_seqs(args.data_file)
 
     args.item_size = max_item + 2
@@ -101,8 +113,13 @@ def main():
     checkpoint = args_str + ".pt"
     args.checkpoint_path = os.path.join(args.output_dir, checkpoint)
 
+    # cluster dataset (for intent clustering)
+    cluster_dataset = DMMD4SRDataset(args, train_user_seq, data_type="train")
+    cluster_sampler = SequentialSampler(cluster_dataset)
+    cluster_dataloader = DataLoader(cluster_dataset, sampler=cluster_sampler, batch_size=args.batch_size)
+
     # training data
-    train_dataset = DMMD4SRDataset(args, user_seq, data_type="train")
+    train_dataset = DMMD4SRDataset(args, train_user_seq, data_type="train")
     train_sampler = RandomSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size)
 
@@ -115,7 +132,7 @@ def main():
     test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=args.batch_size)
 
     model = DMMD4SRModel(args=args)
-    trainer = DMMD4SRTrainer(model, train_dataloader, eval_dataloader, test_dataloader, args)
+    trainer = DMMD4SRTrainer(model, train_dataloader, cluster_dataloader, eval_dataloader, test_dataloader, args)
 
     if args.do_eval:
         trainer.args.train_matrix = test_rating_matrix
