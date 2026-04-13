@@ -14,8 +14,11 @@ from utils    import (EarlyStopping, set_seed, check_path,
 def show_args_info(args):
     print(f"--------------------Configure Info:------------")
     for arg in vars(args):
-        if not isinstance(getattr(args, arg), np.ndarray):
-            print(f"{arg:<30} : {getattr(args, arg):>35}")
+        val = getattr(args, arg)
+        if isinstance(val, (dict, np.ndarray, list)):
+            print(f"{arg:<30} : [skipped]")
+        else:
+            print(f"{arg:<30} : {str(val):>35}")
 
 
 def main():
