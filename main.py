@@ -1,167 +1,177 @@
+"""
+main.py
+ICLRec — 카테고리 제거, 텍스트/이미지만
+베이스라인 조건: sampled 100-neg, leave-two-out, seed 없음, NDCG@10/HR@10/MRR
+"""
+
 import os
+import argparse
+import datetime
 import numpy as np
 import torch
-import argparse
-
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
-from dmmd4sr_data import DMMD4SRDataset, DS  # ← 변경됨
+from datamodule import DataModule
+from models    import SASRecModel
+from trainers  import ICLRecTrainer
+from utils     import set_seed, check_path, load_item_features
 
-from trainers import DMMD4SRTrainer
-from models import DMMD4SRModel
-from utils import EarlyStopping, get_user_seqs, check_path, set_seed
 
-
-def show_args_info(args):
-    print(f"--------------------Configure Info:------------")
-    for arg in vars(args):
-        print(f"{arg:<30} : {getattr(args, arg):>35}")
+def show_args(args):
+    print("=" * 50)
+    for k, v in vars(args).items():
+        if not isinstance(v, np.ndarray):   # feat 배열은 출력 생략
+            print(f"  {k:<30}: {v}")
+    print("=" * 50)
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    # system args
-    parser.add_argument("--data_dir", default="../process_data/", type=str)
-    parser.add_argument("--output_dir", default="output/", type=str)
-    parser.add_argument("--data_name", default="kuaishou", type=str)
-    parser.add_argument("--do_eval", action="store_true")
-    parser.add_argument("--model_idx", default=0, type=int, help="model idenfier 10, 20, 30...")
-    parser.add_argument("--gpu_id", type=str, default="0", help="gpu_id")
+    parser = argparse.ArgumentParser(description='ICLRec - MicroVideo (text+image only)')
 
-    # model args
-    parser.add_argument("--model_name", default="DMMD4SR", type=str)
-    parser.add_argument("--hidden_size", type=int, default=64, help="hidden size of transformer model")
-    parser.add_argument("--num_hidden_layers", type=int, default=2, help="number of layers")
-    parser.add_argument("--num_attention_heads", default=2, type=int)
-    parser.add_argument("--hidden_act", default="gelu", type=str)
-    parser.add_argument("--attention_probs_dropout_prob", type=float, default=0.5, help="attention dropout p")
-    parser.add_argument("--hidden_dropout_prob", type=float, default=0.5, help="hidden dropout p")
-    parser.add_argument("--initializer_range", type=float, default=0.02)
-    parser.add_argument("--max_seq_length", default=50, type=int)
-    parser.add_argument("--n_clusters", type=int, default=32, help="number of clusters")
-    parser.add_argument("--lambda_history", type=float, default=0.6, help="lambda of history")
-    parser.add_argument("--lambda_intent", type=float, default=0.4, help="lambda of intent")
+    # ── 데이터 경로 ────────────────────────────────────────────────────
+    parser.add_argument('--interaction_path', type=str, default='kuaishou_preprocess.pkl')
+    parser.add_argument('--item_path',        type=str, default='item_used.parquet')
+    parser.add_argument('--title_npy',        type=str, default='title_emb.npy')
+    parser.add_argument('--image_pt',         type=str, default='image_features.pt')
 
-    # encoder
-    parser.add_argument("--num_experts", type=int, default=4, help="number of num_experts")
-    parser.add_argument("--diff_loss", type=float, default=0.01)
-    parser.add_argument("--icl_loss", type=float, default=0.001)
+    # ── 출력 ──────────────────────────────────────────────────────────
+    parser.add_argument('--output_dir',  type=str, default='output/')
+    parser.add_argument('--data_name',   type=str, default='kuaishou')
+    parser.add_argument('--model_idx',   type=int, default=0)
 
-    # multi modal (text + visual only)
-    parser.add_argument("--is_use_mm", type=bool, default=True, help="is use mm embedding")
-    parser.add_argument("--is_use_text", type=bool, default=True, help="is use text embedding")
-    parser.add_argument("--is_use_image", type=bool, default=True, help="is use image/visual embedding")
-    parser.add_argument("--text_embedding_path", default='../process_data/text_features.pt', type=str)
-    parser.add_argument("--image_embedding_path", default='../process_data/image_features.pt', type=str)
-    parser.add_argument("--pretrain_emb_dim", type=int, default=512, help="pretrain_emb_dim of clip model")
+    # ── DataModule ────────────────────────────────────────────────────
+    DataModule.add_to_argparse(parser)
 
-    # train args
-    parser.add_argument("--lr", type=float, default=0.001, help="learning rate of adam")
-    parser.add_argument("--batch_size", type=int, default=256, help="number of batch_size")
-    parser.add_argument("--epochs", type=int, default=80, help="number of epochs")
-    parser.add_argument("--early_stop_num", type=int, default=10, help="number of early_stop")
-    parser.add_argument("--no_cuda", action="store_true")
-    parser.add_argument("--log_freq", type=int, default=1, help="per epoch print res")
-    parser.add_argument("--seed", default=2024, type=int)
-    
-    # loss weight
-    parser.add_argument("--rec_weight", type=float, default=1.0, help="weight of recommendation loss")
+    # ── 모델 하이퍼파라미터 ───────────────────────────────────────────
+    parser.add_argument('--hidden_size',               type=int,   default=64)
+    parser.add_argument('--num_hidden_layers',         type=int,   default=2)
+    parser.add_argument('--num_attention_heads',       type=int,   default=2)
+    parser.add_argument('--hidden_act',                type=str,   default='gelu')
+    parser.add_argument('--attention_probs_dropout_prob', type=float, default=0.5)
+    parser.add_argument('--hidden_dropout_prob',       type=float, default=0.5)
+    parser.add_argument('--initializer_range',         type=float, default=0.02)
+    parser.add_argument('--max_seq_length',            type=int,   default=50)
 
-    # contrastive learning
-    parser.add_argument("--temperature", default=1.0, type=float, help="softmax temperature")
-    parser.add_argument("--sim", default='dot', type=str, help="similarity calculation")
+    # ── ICLRec 전용 ────────────────────────────────────────────────────
+    parser.add_argument('--n_clusters',      type=int,   default=32)
+    parser.add_argument('--lambda_history',  type=float, default=0.6)
+    parser.add_argument('--lambda_intent',   type=float, default=0.4)
+    parser.add_argument('--num_experts',     type=int,   default=4)
+    parser.add_argument('--diff_loss',       type=float, default=0.01)
+    parser.add_argument('--icl_loss',        type=float, default=0.001)
+    parser.add_argument('--rec_weight',      type=float, default=1.0)
 
-    # learning related
-    parser.add_argument("--weight_decay", type=float, default=0.0, help="weight_decay of adam")
+    # ── 멀티모달 (카테고리 없음) ──────────────────────────────────────
+    parser.add_argument('--is_use_mm',       type=bool,  default=True)
+    parser.add_argument('--pretrain_text_dim', type=int, default=512,
+                        help='title_emb.npy 차원 (로드 후 자동 덮어씀)')
+    parser.add_argument('--pretrain_img_dim',  type=int, default=512,
+                        help='image_features.pt 차원 (로드 후 자동 덮어씀)')
+
+    # ── 학습 ──────────────────────────────────────────────────────────
+    parser.add_argument('--lr',            type=float, default=0.001)
+    parser.add_argument('--weight_decay',  type=float, default=0.0)
+    parser.add_argument('--epochs',        type=int,   default=200)
+    parser.add_argument('--early_stop_num',type=int,   default=10)
+    parser.add_argument('--no_cuda',       action='store_true')
+    parser.add_argument('--seed',          type=int,   default=2024)
+    parser.add_argument('--gpu_id',        type=str,   default='0')
+    parser.add_argument('--do_eval',       action='store_true')
 
     args = parser.parse_args()
+
+    # ── 환경 설정 ──────────────────────────────────────────────────────
     set_seed(args.seed)
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
     check_path(args.output_dir)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
-    args.cuda_condition = torch.cuda.is_available() and not args.no_cuda
-    print("Using Cuda:", torch.cuda.is_available())
-    
-    args.data_file = args.data_dir + args.data_name + ".txt"
-    args.train_data_file = args.data_dir + args.data_name + "_1.txt"
+    # ── 로그 파일 ──────────────────────────────────────────────────────
+    run_id      = f"ICLRec-{args.data_name}-{args.model_idx}"
+    args.log_file = os.path.join(args.output_dir, run_id + '.txt')
+    args.checkpoint_path = os.path.join(args.output_dir, run_id + '.pt')
 
-    # Dynamic Segmentation (DS)
-    if not os.path.exists(args.train_data_file):
-        print("Applying Dynamic Segmentation...")
-        DS(args.data_file, args.train_data_file, args.max_seq_length)
+    # ── DataModule ─────────────────────────────────────────────────────
+    data = DataModule(args)
+    data.setup()
 
-    # Load data
-    train_user_seq = get_user_seqs(args.train_data_file)
-    user_seq, max_item, valid_rating_matrix, test_rating_matrix = get_user_seqs(args.data_file)
+    # ── 멀티모달 피처 로드 (텍스트 + 이미지, 카테고리 없음) ──────────
+    text_feat, image_feat, text_dim, image_dim = load_item_features(
+        item_path      = args.item_path,
+        title_npy_path = args.title_npy,
+        image_pt_path  = args.image_pt,
+    )
+    args.pretrain_text_dim = text_dim
+    args.pretrain_img_dim  = image_dim
+    args.text_feat  = text_feat    # models.py에서 임베딩 초기화에 사용
+    args.image_feat = image_feat
 
-    args.item_size = max_item + 2
-    args.mask_id = max_item + 1
-    
-    # save model args
-    args_str = f"{args.model_name}-{args.data_name}-{args.model_idx}"
-    args.log_file = os.path.join(args.output_dir, args_str + ".txt")
+    # args 정리
+    args.max_seq_length = args.max_len
+    args.hidden_size    = args.hidden_size
 
-    show_args_info(args)
+    show_args(args)
 
-    with open(args.log_file, "a") as f:
-        f.write(str(args) + "\n")
+    # ── 모델 ────────────────────────────────────────────────────────────
+    model = SASRecModel(args)
 
-    # set item score in train set to `0` in validation
-    args.train_matrix = valid_rating_matrix
+    # ── DataLoader ──────────────────────────────────────────────────────
+    train_loader   = data.train_dataloader()
+    val_loader     = data.val_dataloader()
+    test_loader    = data.test_dataloader()
 
-    # save model
-    checkpoint = args_str + ".pt"
-    args.checkpoint_path = os.path.join(args.output_dir, checkpoint)
+    # cluster_dataloader = val_loader (ICLRecTrainer 인터페이스 유지)
+    trainer = ICLRecTrainer(
+        model, train_loader, val_loader,
+        val_loader, test_loader, args
+    )
 
-    # cluster dataset (for intent clustering)
-    cluster_dataset = DMMD4SRDataset(args, train_user_seq, data_type="train")
-    cluster_sampler = SequentialSampler(cluster_dataset)
-    cluster_dataloader = DataLoader(cluster_dataset, sampler=cluster_sampler, batch_size=args.batch_size)
-
-    # training data
-    train_dataset = DMMD4SRDataset(args, train_user_seq, data_type="train")
-    train_sampler = RandomSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size)
-
-    eval_dataset = DMMD4SRDataset(args, user_seq, data_type="valid")
-    eval_sampler = SequentialSampler(eval_dataset)
-    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.batch_size)
-
-    test_dataset = DMMD4SRDataset(args, user_seq, data_type="test")
-    test_sampler = SequentialSampler(test_dataset)
-    test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=args.batch_size)
-
-    model = DMMD4SRModel(args=args)
-    trainer = DMMD4SRTrainer(model, train_dataloader, cluster_dataloader, eval_dataloader, test_dataloader, args)
-
+    # ── 평가만 ─────────────────────────────────────────────────────────
     if args.do_eval:
-        trainer.args.train_matrix = test_rating_matrix
         trainer.load(args.checkpoint_path)
-        print(f"Load model from {args.checkpoint_path} for test!")
-        scores, result_info = trainer.test(0, full_sort=True)
-    else:
-        print(f"Train DMMD4SR")
-        early_stopping = EarlyStopping(args.checkpoint_path, patience=args.early_stop_num, verbose=True)
-        for epoch in range(args.epochs):
-            trainer.train(epoch)
-            # evaluate on NDCG@10, HR@10, MRR
-            scores, _ = trainer.valid(epoch, full_sort=True)
-            early_stopping(np.array(scores[-1:]), trainer.model)
-            if early_stopping.early_stop:
-                print("Early stopping")
-                break
-        
-        trainer.args.train_matrix = test_rating_matrix
-        print("---------------Change to test_rating_matrix!-------------------")
-        # load the best model
-        trainer.model.load_state_dict(torch.load(args.checkpoint_path))
-        scores, result_info = trainer.test(0, full_sort=True)
+        print("Testing...")
+        hit, ndcg, mrr = trainer.test(0)
+        print(f"[Test] HR@10={hit:.4f}  NDCG@10={ndcg:.4f}  MRR={mrr:.4f}")
+        return
 
-    print(args_str)
-    print(result_info)
-    with open(args.log_file, "a") as f:
-        f.write(args_str + "\n")
-        f.write(result_info + "\n")
+    # ── 학습 루프 ──────────────────────────────────────────────────────
+    best_val_ndcg  = 0.0
+    best_test_hr   = best_test_ndcg = best_test_mrr = 0.0
+    no_improve     = 0
+
+    for epoch in range(1, args.epochs + 1):
+        trainer.train(epoch)
+
+        # valid
+        val_hit, val_ndcg, val_mrr = trainer.valid(epoch)
+
+        if val_ndcg > best_val_ndcg:
+            best_val_ndcg = val_ndcg
+            no_improve    = 0
+            torch.save(model.state_dict(), args.checkpoint_path)
+            print(f"  ✓ Best valid NDCG@10={val_ndcg:.4f} — model saved")
+
+            # 즉시 test
+            test_hit, test_ndcg, test_mrr = trainer.test(epoch)
+            best_test_hr   = test_hit
+            best_test_ndcg = test_ndcg
+            best_test_mrr  = test_mrr
+        else:
+            no_improve += 1
+            print(f"  No improve: {no_improve}/{args.early_stop_num}")
+            if no_improve >= args.early_stop_num:
+                print("Early stopping.")
+                break
+
+    print("\n" + "=" * 50)
+    print(f"Best Valid  NDCG@10 : {best_val_ndcg:.4f}")
+    print(f"Best Test   HR@10   : {best_test_hr:.4f}")
+    print(f"            NDCG@10 : {best_test_ndcg:.4f}")
+    print(f"            MRR     : {best_test_mrr:.4f}")
+    print("=" * 50)
+
+    with open(args.log_file, 'a') as f:
+        f.write(f"\nBest Test HR@10={best_test_hr:.4f} "
+                f"NDCG@10={best_test_ndcg:.4f} MRR={best_test_mrr:.4f}\n")
 
 
 if __name__ == '__main__':
