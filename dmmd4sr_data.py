@@ -113,7 +113,6 @@ class DMMD4SRDataset(Dataset):
         self.max_len = args.max_seq_length
 
         # Create target item sets (for contrastive learning)
-        self.train_tag = None
         if data_type == "train" and hasattr(args, 'train_data_file'):
             try:
                 self.sem_tag = Generate_tag(self.args.data_dir, self.args.data_name, self.args.data_dir)
@@ -171,22 +170,6 @@ class DMMD4SRDataset(Dataset):
         if self.data_type == "train":
             input_ids = items[:-3]
             target_pos = items[1:-2]
-            
-            # Contrastive learning: find augmented sequence
-            if self.train_tag is not None and items[-3] in self.train_tag:
-                temp = self.train_tag[items[-3]]
-                flag = False
-                for t_ in temp:
-                    if t_[1:] == items[:-3]:
-                        continue
-                    else:
-                        target_pos_ = t_[1:]
-                        flag = True
-                        break
-                if not flag:
-                    target_pos_ = random.choice(temp)[1:]
-            else:
-                target_pos_ = target_pos
             
             target_pos = (target_pos, target_pos_)
             answer = [0]
