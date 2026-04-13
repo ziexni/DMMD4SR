@@ -69,10 +69,12 @@ class RecWithContrastiveLearningDataset(Dataset):
 
             if self.data_type == 'valid':
                 history = self.user_train.get(u, [])
-                target  = self.user_valid.get(u, [None])[0]
+                val_list = self.user_valid.get(u, [])
+                target  = val_list[0] if val_list else None
             else:
                 history = self.user_train.get(u, []) + self.user_valid.get(u, [])
-                target  = self.user_test.get(u, [None])[0]
+                test_list = self.user_test.get(u, [])
+                target    = test_list[0] if test_list else None
 
             if target is None:
                 # 정답 없는 유저 — 더미 반환
