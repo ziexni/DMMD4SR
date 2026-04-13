@@ -8,7 +8,7 @@ from data import get_data
 from datasets import RecDataset
 
 
-INTERACTION_PATH = 'kuaishou_preprocess.pkl'
+INTERACTION_PATH = 'interaction.parquet'
 
 
 class DataModule:
