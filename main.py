@@ -43,7 +43,7 @@ def main():
     DataModule.add_to_argparse(parser)
 
     # ── 모델 하이퍼파라미터 ───────────────────────────────────────────
-    parser.add_argument('--hidden_size',               type=int,   default=64)
+    parser.add_argument('--hidden_size',               type=int,   default=128)
     parser.add_argument('--num_hidden_layers',         type=int,   default=2)
     parser.add_argument('--num_attention_heads',       type=int,   default=2)
     parser.add_argument('--hidden_act',                type=str,   default='gelu')
