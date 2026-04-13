@@ -1,4 +1,14 @@
-import numpy as np
+# Kaggle Notebook
+
+import os
+import subprocess
+
+os.makedirs('DMMD4SR', exist_ok=True)
+os.chdir('DMMD4SR')
+
+# utils.py 직접 생성
+with open('utils.py', 'w') as f:
+    f.write('''import numpy as np
 import math
 import random
 import os
@@ -23,7 +33,6 @@ def check_path(path):
 
 
 class EarlyStopping:
-    """Early stops the training if validation loss doesn't improve after a given patience."""
     def __init__(self, checkpoint_path, patience=7, verbose=False, delta=0):
         self.checkpoint_path = checkpoint_path
         self.patience = patience
@@ -62,19 +71,15 @@ class EarlyStopping:
 
 
 def get_user_seqs(data_file):
-    """
-    Load data from txt file (format: user_id item1 item2 ...)
-    Returns: user_seq (list of lists), max_item, valid_matrix, test_matrix
-    """
     lines = open(data_file).readlines()
-    user_seq = []  # ← List of lists!
+    user_seq = []
     item_set = set()
     
     for line in lines:
         user, items = line.strip().split(" ", 1)
         items = items.split(" ")
         items = [int(item) for item in items]
-        user_seq.append(items)  # ← Append as list!
+        user_seq.append(items)
         item_set = item_set | set(items)
     
     max_item = max(item_set)
@@ -88,46 +93,28 @@ def get_user_seqs(data_file):
 
 
 def generate_rating_matrix_valid(user_seq, num_users, num_items):
-    """Generate sparse matrix for validation (exclude last 2 items)"""
-    row = []
-    col = []
-    data = []
+    row, col, data = [], [], []
     for user_id, item_list in enumerate(user_seq):
         for item in item_list[:-2]:
             row.append(user_id)
             col.append(item)
             data.append(1)
-    
-    row = np.array(row)
-    col = np.array(col)
-    data = np.array(data)
-    rating_matrix = csr_matrix((data, (row, col)), shape=(num_users, num_items))
-    return rating_matrix
+    return csr_matrix((np.array(data), (np.array(row), np.array(col))), shape=(num_users, num_items))
 
 
 def generate_rating_matrix_test(user_seq, num_users, num_items):
-    """Generate sparse matrix for test (exclude last 1 item)"""
-    row = []
-    col = []
-    data = []
+    row, col, data = [], [], []
     for user_id, item_list in enumerate(user_seq):
         for item in item_list[:-1]:
             row.append(user_id)
             col.append(item)
             data.append(1)
-    
-    row = np.array(row)
-    col = np.array(col)
-    data = np.array(data)
-    rating_matrix = csr_matrix((data, (row, col)), shape=(num_users, num_items))
-    return rating_matrix
+    return csr_matrix((np.array(data), (np.array(row), np.array(col))), shape=(num_users, num_items))
 
 
 def recall_at_k(actual, predicted, topk):
-    sum_recall = 0.0
-    num_users = len(predicted)
-    true_users = 0
-    for i in range(num_users):
+    sum_recall, true_users = 0.0, 0
+    for i in range(len(predicted)):
         act_set = set([actual[i]])
         pred_set = set(predicted[i][:topk])
         if len(act_set) != 0:
@@ -148,10 +135,7 @@ def ndcg_k(actual, predicted, topk):
 
 def idcg_k(k):
     res = sum([1.0 / math.log(i + 2, 2) for i in range(k)])
-    if not res:
-        return 1.0
-    else:
-        return res
+    return res if res else 1.0
 
 
 def cal_mrr(actual, predicted):
@@ -159,13 +143,21 @@ def cal_mrr(actual, predicted):
     for i in range(len(predicted)):
         r = []
         act_set = set([actual[i]])
-        pred_list = predicted[i]
-        for item in pred_list:
-            if item in act_set:
-                r.append(1)
-            else:
-                r.append(0)
+        for item in predicted[i]:
+            r.append(1 if item in act_set else 0)
         r = np.array(r)
         if np.sum(r) > 0:
             sum_mrr += np.reciprocal(np.where(r == 1)[0] + 1, dtype=np.float64)[0]
     return sum_mrr / len(predicted)
+''')
+
+print("✓ utils.py created")
+
+# 나머지 파일 다운로드
+base_url = 'https://raw.githubusercontent.com/ziexni/DMMD4SR/main/'
+for fname in ['diffusion.py', 'main.py', 'dmmd4sr_data.py', 'trainers.py', 'models.py', 'modules.py', 'prepare_data.py']:
+    subprocess.run(['wget', '-q', '-O', fname, base_url + fname], timeout=30)
+    print(f"✓ {fname}")
+
+# 데이터 준비 + 학습
+# ... (이하 동일)
