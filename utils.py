@@ -62,16 +62,19 @@ class EarlyStopping:
 
 
 def get_user_seqs(data_file):
-    """Load data from txt file (format: user_id item1 item2 ...)"""
+    """
+    Load data from txt file (format: user_id item1 item2 ...)
+    Returns: user_seq (list of lists), max_item, valid_matrix, test_matrix
+    """
     lines = open(data_file).readlines()
-    user_seq = []
+    user_seq = []  # ← List of lists!
     item_set = set()
     
     for line in lines:
         user, items = line.strip().split(" ", 1)
         items = items.split(" ")
         items = [int(item) for item in items]
-        user_seq.append(items)
+        user_seq.append(items)  # ← Append as list!
         item_set = item_set | set(items)
     
     max_item = max(item_set)
@@ -85,6 +88,7 @@ def get_user_seqs(data_file):
 
 
 def generate_rating_matrix_valid(user_seq, num_users, num_items):
+    """Generate sparse matrix for validation (exclude last 2 items)"""
     row = []
     col = []
     data = []
@@ -102,6 +106,7 @@ def generate_rating_matrix_valid(user_seq, num_users, num_items):
 
 
 def generate_rating_matrix_test(user_seq, num_users, num_items):
+    """Generate sparse matrix for test (exclude last 1 item)"""
     row = []
     col = []
     data = []
