@@ -30,9 +30,9 @@ def set_seed(seed):
 # 피처 로딩
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_item_features(item_path, title_npy_path, image_pt_path, usernum=None):
+def load_item_features(item_path, title_npy_path):
     """
-    텍스트(title_emb.npy)와 이미지(video_feature .pt) 피처만 로드.
+    텍스트(title_emb.npy)와 이미지(item_used.parquet의 video_feature 컬럼)만 로드.
     카테고리는 사용하지 않음.
 
     반환
@@ -51,6 +51,7 @@ def load_item_features(item_path, title_npy_path, image_pt_path, usernum=None):
     item_df['item_id'] = item_df['item_id'] + 1
     max_item_id = int(item_df['item_id'].max())
 
+    # 텍스트 피처
     title_dim  = title_raw.shape[1]
     text_feat  = np.zeros((max_item_id + 1, title_dim), dtype=np.float32)
     for raw_idx, row in item_df.iterrows():
@@ -58,19 +59,13 @@ def load_item_features(item_path, title_npy_path, image_pt_path, usernum=None):
         if raw_idx < len(title_raw):
             text_feat[iid] = title_raw[raw_idx].astype(np.float32)
 
-    # 이미지 피처
-    image_raw  = torch.load(image_pt_path)       # Tensor or list
-    if isinstance(image_raw, torch.Tensor):
-        image_raw = image_raw.numpy()
-    elif isinstance(image_raw, list):
-        image_raw = np.array(image_raw, dtype=np.float32)
-
-    image_dim  = image_raw.shape[1]
+    # 이미지 피처 — video_feature 컬럼에서 직접 로드
+    sample_img = item_df['video_feature'].iloc[0]
+    image_dim  = len(sample_img)
     image_feat = np.zeros((max_item_id + 1, image_dim), dtype=np.float32)
-    for raw_idx, row in item_df.iterrows():
+    for _, row in item_df.iterrows():
         iid = int(row['item_id'])
-        if raw_idx < len(image_raw):
-            image_feat[iid] = image_raw[raw_idx].astype(np.float32)
+        image_feat[iid] = np.array(row['video_feature'], dtype=np.float32)
 
     print(f"[load_item_features] title_dim={title_dim}, image_dim={image_dim}, "
           f"max_item_id={max_item_id}")
