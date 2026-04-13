@@ -1,20 +1,9 @@
-"""
-utils.py
-베이스라인 조건에 맞춘 유틸리티
-  - sampled 100-neg 평가
-  - seed 고정 없음
-  - 지표: NDCG@10, HR@10, MRR
-"""
-
 import os
 import random
 import numpy as np
 import torch
+from collections import defaultdict
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 시드
-# ══════════════════════════════════════════════════════════════════════════════
 
 def set_seed(seed):
     random.seed(seed)
@@ -26,42 +15,78 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
+def check_path(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+        print(f"{path} created")
+
+
+def neg_sample(item_set, item_size):
+    item = random.randint(1, item_size - 1)
+    while item in item_set:
+        item = random.randint(1, item_size - 1)
+    return item
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# 피처 로딩
+# 데이터 분할 — leave-two-out
+# ══════════════════════════════════════════════════════════════════════════════
+
+def data_partition(fname):
+    import pandas as pd
+
+    df = pd.read_parquet(fname)
+    df['user_id'] = df['user_id'] + 1
+    df['item_id'] = df['item_id'] + 1
+    df = df.sort_values(by=['user_id', 'timestamp'], kind='mergesort').reset_index(drop=True)
+
+    usernum = int(df['user_id'].max())
+    itemnum = int(df['item_id'].max())
+
+    User = defaultdict(list)
+    for u, i in zip(df['user_id'], df['item_id']):
+        User[u].append(int(i))
+
+    user_train, user_valid, user_test = {}, {}, {}
+    for user, seq in User.items():
+        n = len(seq)
+        if n < 3:
+            user_train[user] = seq
+            user_valid[user] = []
+            user_test[user]  = []
+        else:
+            user_train[user] = seq[:-2]
+            user_valid[user] = [seq[-2]]
+            user_test[user]  = [seq[-1]]
+
+    print(f"[data_partition] users={usernum}, items={itemnum}")
+    return [user_train, user_valid, user_test, usernum, itemnum]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 멀티모달 피처 로딩 — 텍스트 + 이미지(video_feature), 카테고리 제거
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_item_features(item_path, title_npy_path):
-    """
-    텍스트(title_emb.npy)와 이미지(item_used.parquet의 video_feature 컬럼)만 로드.
-    카테고리는 사용하지 않음.
-
-    반환
-    ----
-    text_feat  : np.ndarray (max_item_id + 1, title_dim)
-    image_feat : np.ndarray (max_item_id + 1, image_dim)
-    title_dim, image_dim
-    """
     import pandas as pd
 
     item_df   = pd.read_parquet(item_path)
-    title_raw = np.load(title_npy_path)          # (num_items, title_dim)
+    title_raw = np.load(title_npy_path)
 
-    # item_id 1-based 변환 (data_partition과 동일)
     item_df = item_df.copy().reset_index(drop=True)
     item_df['item_id'] = item_df['item_id'] + 1
     max_item_id = int(item_df['item_id'].max())
 
-    # 텍스트 피처
-    title_dim  = title_raw.shape[1]
-    text_feat  = np.zeros((max_item_id + 1, title_dim), dtype=np.float32)
+    # 텍스트
+    title_dim = title_raw.shape[1]
+    text_feat = np.zeros((max_item_id + 1, title_dim), dtype=np.float32)
     for raw_idx, row in item_df.iterrows():
         iid = int(row['item_id'])
         if raw_idx < len(title_raw):
             text_feat[iid] = title_raw[raw_idx].astype(np.float32)
 
-    # 이미지 피처 — video_feature 컬럼에서 직접 로드
-    sample_img = item_df['video_feature'].iloc[0]
-    image_dim  = len(sample_img)
+    # 이미지 (video_feature 컬럼)
+    image_dim  = len(item_df['video_feature'].iloc[0])
     image_feat = np.zeros((max_item_id + 1, image_dim), dtype=np.float32)
     for _, row in item_df.iterrows():
         iid = int(row['item_id'])
@@ -69,7 +94,6 @@ def load_item_features(item_path, title_npy_path):
 
     print(f"[load_item_features] title_dim={title_dim}, image_dim={image_dim}, "
           f"max_item_id={max_item_id}")
-
     return text_feat, image_feat, title_dim, image_dim
 
 
@@ -78,9 +102,6 @@ def load_item_features(item_path, title_npy_path):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_metric(pred_list, topk=10):
-    """
-    pred_list: 각 유저에 대한 정답 아이템의 rank (0-indexed)
-    """
     NDCG = HIT = MRR = 0.0
     for rank in pred_list:
         MRR += 1.0 / (rank + 1.0)
@@ -98,31 +119,21 @@ def get_metric(pred_list, topk=10):
 class EarlyStopping:
     def __init__(self, checkpoint_path, patience=10, verbose=True):
         self.checkpoint_path = checkpoint_path
-        self.patience  = patience
-        self.verbose   = verbose
-        self.counter   = 0
-        self.best_ndcg = 0.0
+        self.patience   = patience
+        self.verbose    = verbose
+        self.counter    = 0
+        self.best_score = None
         self.early_stop = False
 
-    def __call__(self, ndcg, model):
-        if ndcg > self.best_ndcg:
-            self.best_ndcg = ndcg
-            self.counter   = 0
+    def __call__(self, score, model):
+        if self.best_score is None or score > self.best_score:
+            self.best_score = score
+            self.counter    = 0
             torch.save(model.state_dict(), self.checkpoint_path)
             if self.verbose:
-                print(f"  ✓ Best model saved (NDCG@10={ndcg:.4f})")
+                print(f"  ✓ Best model saved (NDCG@10={score:.4f})")
         else:
             self.counter += 1
             print(f"  EarlyStopping counter: {self.counter}/{self.patience}")
             if self.counter >= self.patience:
                 self.early_stop = True
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 기타
-# ══════════════════════════════════════════════════════════════════════════════
-
-def check_path(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
-        print(f"{path} created")
