@@ -4,7 +4,7 @@ leave-two-out split — BERT4Rec 베이스라인과 동일한 프로토콜
 """
 
 import numpy as np
-import pickle
+import pandas as pd
 from collections import defaultdict
 
 
@@ -14,18 +14,17 @@ def get_data(interaction_path):
         user_train, user_valid, user_test : {user_id: [item_id, ...]}
         usernum, itemnum
     """
-    with open(interaction_path, 'rb') as f:
-        df = pickle.load(f)
+    df = pd.read_parquet(interaction_path)
 
     df['user_id'] = df['user_id'] + 1
-    df['video_id'] = df['video_id'] + 1
+    df['item_id'] = df['item_id'] + 1
     df = df.sort_values(by=['user_id', 'timestamp'], kind='mergesort').reset_index(drop=True)
 
     usernum = int(df['user_id'].max())
-    itemnum = int(df['video_id'].max())
+    itemnum = int(df['item_id'].max())
 
     User = defaultdict(list)
-    for u, i in zip(df['user_id'], df['video_id']):
+    for u, i in zip(df['user_id'], df['item_id']):
         User[u].append(int(i))
 
     user_train, user_valid, user_test = {}, {}, {}
