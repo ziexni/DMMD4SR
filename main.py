@@ -66,11 +66,9 @@ def main():
     parser.add_argument("--epochs",         default=200,   type=int)
     parser.add_argument("--early_stop_num", default=10,    type=int)
     parser.add_argument("--weight_decay",   default=0.0,   type=float)
-    parser.add_argument("--seed",           default=2024,  type=int)
 
     args = parser.parse_args()
 
-    set_seed(args.seed)
     check_path(args.output_dir)
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
     args.cuda_condition = torch.cuda.is_available() and not args.no_cuda
