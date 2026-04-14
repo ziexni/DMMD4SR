@@ -3,6 +3,7 @@ from tqdm import tqdm
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import Adam
 
 from utils import get_metric
@@ -60,6 +61,12 @@ class Trainer:
     def load(self, file_name):
         self.model.load_state_dict(torch.load(file_name, map_location=self.device))
 
+    def predict_full(self, seq_out):
+        """Full softmax over all items — DMMD4SR 원본과 동일"""
+        test_item_emb = self.model.item_embeddings.weight  # (item_size, H)
+        rating_pred   = torch.matmul(seq_out, test_item_emb.transpose(0, 1))  # (B, item_size)
+        return rating_pred
+
     def mask_correlated_samples(self, batch_size):
         N    = 2 * batch_size
         mask = torch.ones((N, N), dtype=torch.bool)
@@ -70,7 +77,6 @@ class Trainer:
         return mask
 
     def info_nce(self, z_i, z_j, temp, batch_size, sim='dot'):
-        import torch.nn.functional as F
         N = 2 * batch_size
         z = torch.cat((z_i, z_j), dim=0)
         sim_mat = (F.cosine_similarity(z.unsqueeze(1), z.unsqueeze(0), dim=2) / temp
@@ -81,8 +87,8 @@ class Trainer:
         mask     = self.mask_correlated_samples(batch_size)
         negative = sim_mat[mask].reshape(N, -1)
 
-        labels  = torch.zeros(N, dtype=torch.long, device=positive.device)
-        logits  = torch.cat((positive, negative), dim=1)
+        labels = torch.zeros(N, dtype=torch.long, device=positive.device)
+        logits = torch.cat((positive, negative), dim=1)
         return logits, labels
 
 
@@ -102,17 +108,14 @@ class ICLRecTrainer(Trainer):
 
             for i, rec_batch in data_iter:
                 rec_batch = tuple(t.to(self.device) for t in rec_batch)
-                _, input_ids, target_pos, target_neg, _ = rec_batch
+                # datasets.py train 반환: (user_id, input_ids, target_pos, answer)
+                _, input_ids, target_pos, answer = rec_batch
 
                 seq_out, t_emb_loss, v_emb_loss, diff_loss = self.model(input_ids, is_train=True)
 
-                # next-item prediction (마지막 위치)
-                seq_emb   = seq_out[:, -1, :]
-                pos_emb   = self.model.item_embeddings(target_pos[:, -1])
-                neg_emb   = self.model.item_embeddings(target_neg[:, -1])
-                pos_score = (seq_emb * pos_emb).sum(dim=-1)
-                neg_score = (seq_emb * neg_emb).sum(dim=-1)
-                rec_loss  = -torch.log(torch.sigmoid(pos_score - neg_score) + 1e-8).mean()
+                # ── CrossEntropy (full softmax) — DMMD4SR 원본과 동일 ──
+                logits   = self.predict_full(seq_out[:, -1, :])   # (B, item_size)
+                rec_loss = nn.CrossEntropyLoss()(logits, target_pos[:, -1])
 
                 joint_loss = (self.args.rec_weight * rec_loss
                               + self.args.icl_loss  * (t_emb_loss + v_emb_loss)
@@ -134,7 +137,7 @@ class ICLRecTrainer(Trainer):
                         f"joint_loss={joint_avg_loss/n:.4f}\n")
 
         else:
-            # sampled 평가 — seed 없음, train 아이템만 제외
+            # ── sampled 평가 (101-way) — 공정성 맞춘 평가 프로토콜 유지 ──
             self.model.eval()
             pred_list = []
             split     = 'valid' if dataloader is self.eval_dataloader else 'test'
@@ -143,12 +146,13 @@ class ICLRecTrainer(Trainer):
             with torch.no_grad():
                 for i, batch in data_iter:
                     batch = tuple(t.to(self.device) for t in batch)
-                    seq, candidates, labels = batch
+                    seq, candidates, labels = batch   # datasets.py valid/test 반환 형식
 
                     seq_out, _, _, _ = self.model(seq, is_train=False)
-                    seq_emb  = seq_out[:, -1, :]              # (B, H)
-                    cand_emb = self.model.item_embeddings(candidates)  # (B, 101, H)
-                    scores   = torch.bmm(cand_emb, seq_emb.unsqueeze(-1)).squeeze(-1)  # (B, 101)
+                    seq_emb  = seq_out[:, -1, :]                            # (B, H)
+                    cand_emb = self.model.item_embeddings(candidates)       # (B, 101, H)
+                    scores   = torch.bmm(cand_emb,
+                                         seq_emb.unsqueeze(-1)).squeeze(-1) # (B, 101)
 
                     for b in range(scores.size(0)):
                         rank = (scores[b][0] <= scores[b]).sum().item() - 1
