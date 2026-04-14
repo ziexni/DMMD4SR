@@ -171,8 +171,8 @@ class SASRecModel(nn.Module):
 
         if self.args.is_use_mm:
             # Domain shift denoising
-            text_d = self.diffusion_process.p_sample(self.sdnet_td, text_emb, steps=5)
-            img_d  = self.diffusion_process.p_sample(self.sdnet_vd, img_emb,  steps=5)
+            text_d = self.diffusion_process.p_sample(self.sdnet_td, text_emb, steps=20)
+            img_d  = self.diffusion_process.p_sample(self.sdnet_vd, img_emb,  steps=20)
 
             # Intent cluster condition
             self.centroids, self.labels = self.intent_cluster(item_id_emb, self.n_clusters)
@@ -180,8 +180,8 @@ class SASRecModel(nn.Module):
                        + self.centroids[self.labels] * self.lambda_intent)
 
             # Interest-agnostic denoising
-            text_c = self.diffusion_process.p_sample(self.sdnet_tc, self._cond_denoise(text_d, id_cond), steps=5)
-            img_c  = self.diffusion_process.p_sample(self.sdnet_vc, self._cond_denoise(img_d,  id_cond), steps=5)
+            text_c = self.diffusion_process.p_sample(self.sdnet_tc, self._cond_denoise(text_d, id_cond), steps=20)
+            img_c  = self.diffusion_process.p_sample(self.sdnet_vc, self._cond_denoise(img_d,  id_cond), steps=20)
 
             enhanced, t_mu, t_sigma, i_mu, i_sigma = self.multimodal_fusion(text_c, img_c, seq_emb)
 
@@ -195,7 +195,7 @@ class SASRecModel(nn.Module):
                 diff_loss   = 0.5 * (t_cond_loss + v_cond_loss) + 0.5 * final_diff + 2 * kl_loss
                 seq_emb     = enhanced
             else:
-                final   = self.diffusion_process.p_sample(self.sdnet_f, enhanced, steps=5)
+                final   = self.diffusion_process.p_sample(self.sdnet_f, enhanced, steps=20)
                 seq_emb = (1 - self.denoise_weight) * seq_emb + self.denoise_weight * final
 
         item_encoded = self.encoder(seq_emb, ext_mask, output_all_encoded_layers=True)
