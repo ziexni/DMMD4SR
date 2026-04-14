@@ -37,7 +37,7 @@ def main():
     parser.add_argument("--no_cuda",     action="store_true")
 
     # 모델
-    parser.add_argument("--hidden_size",                  default=64,    type=int)
+    parser.add_argument("--hidden_size",                  default=128,    type=int)
     parser.add_argument("--num_hidden_layers",            default=2,     type=int)
     parser.add_argument("--num_attention_heads",          default=2,     type=int)
     parser.add_argument("--hidden_act",                   default="gelu",type=str)
