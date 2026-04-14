@@ -25,19 +25,20 @@ def main():
     parser = argparse.ArgumentParser()
 
     # 데이터 경로
-    parser.add_argument("--data_dir",    default="./",           type=str)
-    parser.add_argument("--output_dir",  default="output/",      type=str)
-    parser.add_argument("--data_name",   default="kuaishou",     type=str)
-    parser.add_argument("--interaction_path", default="interaction.parquet", type=str)
-    parser.add_argument("--item_path",   default="item_used.parquet",        type=str)
-    parser.add_argument("--title_npy",   default="title_emb.npy",            type=str)
-    parser.add_argument("--model_idx",   default=0,              type=int)
-    parser.add_argument("--do_eval",     action="store_true")
-    parser.add_argument("--gpu_id",      default="0",            type=str)
-    parser.add_argument("--no_cuda",     action="store_true")
+    parser.add_argument("--data_dir",         default="./",                    type=str)
+    parser.add_argument("--output_dir",       default="output/",               type=str)
+    parser.add_argument("--data_name",        default="kuaishou",              type=str)
+    parser.add_argument("--interaction_path", default="interaction.parquet",   type=str)
+    parser.add_argument("--item_path",        default="item_used.parquet",     type=str)
+    parser.add_argument("--title_npy",        default="title_emb.npy",         type=str)
+    parser.add_argument("--model_idx",        default=0,                       type=int)
+    parser.add_argument("--do_eval",          action="store_true")
+    parser.add_argument("--gpu_id",           default="0",                     type=str)
+    parser.add_argument("--no_cuda",          action="store_true")
+    parser.add_argument("--seed",             default=2024,                    type=int)
 
-    # 모델
-    parser.add_argument("--hidden_size",                  default=128,    type=int)
+    # 모델 — DMMD4SR 원본 하이퍼파라미터 복원
+    parser.add_argument("--hidden_size",                  default=64,    type=int)   # ← 원본 64
     parser.add_argument("--num_hidden_layers",            default=2,     type=int)
     parser.add_argument("--num_attention_heads",          default=2,     type=int)
     parser.add_argument("--hidden_act",                   default="gelu",type=str)
@@ -47,14 +48,14 @@ def main():
     parser.add_argument("--max_seq_length",               default=50,    type=int)
 
     # ICLRec
-    parser.add_argument("--n_clusters",     default=32,  type=int)
-    parser.add_argument("--lambda_history", default=0.6, type=float)
-    parser.add_argument("--lambda_intent",  default=0.4, type=float)
-    parser.add_argument("--num_experts",    default=4,   type=int)
-    parser.add_argument("--diff_loss",      default=0.01,type=float)
+    parser.add_argument("--n_clusters",     default=32,   type=int)
+    parser.add_argument("--lambda_history", default=0.6,  type=float)
+    parser.add_argument("--lambda_intent",  default=0.4,  type=float)
+    parser.add_argument("--num_experts",    default=4,    type=int)
+    parser.add_argument("--diff_loss",      default=0.01, type=float)
     parser.add_argument("--icl_loss",       default=0.001,type=float)
-    parser.add_argument("--rec_weight",     default=1.0, type=float)
-    parser.add_argument("--is_use_mm",      default=True,type=bool)
+    parser.add_argument("--rec_weight",     default=1.0,  type=float)
+    parser.add_argument("--is_use_mm",      default=True, type=bool)
 
     # 멀티모달 차원 (로드 후 자동 설정)
     parser.add_argument("--pretrain_text_dim", default=512, type=int)
@@ -68,7 +69,7 @@ def main():
     parser.add_argument("--weight_decay",   default=0.0,   type=float)
 
     args = parser.parse_args()
-
+    set_seed(args.seed)
     check_path(args.output_dir)
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
     args.cuda_condition = torch.cuda.is_available() and not args.no_cuda
@@ -101,7 +102,7 @@ def main():
     with open(args.log_file, "a") as f:
         f.write(str(args) + "\n")
 
-    # ── user_seq 구성 (datasets.py와 동일한 인터페이스) ─────────────────
+    # ── user_seq 구성 ────────────────────────────────────────────────────
     # user_seq[i] = user (i+1)의 전체 시퀀스 (train + valid + test)
     user_seq = []
     for u in range(1, usernum + 1):
@@ -110,23 +111,23 @@ def main():
 
     # ── Dataset / DataLoader ────────────────────────────────────────────
     train_dataset = RecWithContrastiveLearningDataset(args, user_seq, data_type='train')
-    train_sampler = RandomSampler(train_dataset)
-    train_loader  = DataLoader(train_dataset, sampler=train_sampler,
+    train_loader  = DataLoader(train_dataset,
+                               sampler=RandomSampler(train_dataset),
                                batch_size=args.batch_size)
 
     eval_dataset  = RecWithContrastiveLearningDataset(args, user_seq, data_type='valid')
-    eval_sampler  = SequentialSampler(eval_dataset)
-    eval_loader   = DataLoader(eval_dataset, sampler=eval_sampler,
+    eval_loader   = DataLoader(eval_dataset,
+                               sampler=SequentialSampler(eval_dataset),
                                batch_size=args.batch_size)
 
     test_dataset  = RecWithContrastiveLearningDataset(args, user_seq, data_type='test')
-    test_sampler  = SequentialSampler(test_dataset)
-    test_loader   = DataLoader(test_dataset, sampler=test_sampler,
+    test_loader   = DataLoader(test_dataset,
+                               sampler=SequentialSampler(test_dataset),
                                batch_size=args.batch_size)
 
     # ── 모델 / 트레이너 ────────────────────────────────────────────────
     model   = SASRecModel(args=args)
-    trainer = ICLRecTrainer(model, train_loader, eval_loader,
+    trainer = ICLRecTrainer(model, train_loader, train_loader,
                             eval_loader, test_loader, args)
 
     if args.do_eval:
@@ -145,7 +146,7 @@ def main():
         trainer.train(epoch)
         scores, _ = trainer.valid(epoch)
 
-        # scores = [hit, ndcg, mrr], early stopping 기준 = NDCG@10
+        # early stopping 기준: NDCG@10 (scores[1])
         early_stopping(scores[1], trainer.model)
 
         if early_stopping.counter == 0:
