@@ -114,7 +114,7 @@ class ICLRecTrainer(Trainer):
                 seq_out, t_emb_loss, v_emb_loss, diff_loss = self.model(input_ids, is_train=True)
 
                 # ── CrossEntropy (full softmax) — DMMD4SR 원본과 동일 ──
-                logits   = self.predict_full(seq_out[:, -1, :])   # (B, item_size)
+                logits   = self.predict_full(seq_out)   # (B, item_size)
                 rec_loss = nn.CrossEntropyLoss(ignore_index=0)(
                     logits.view(-1, logits.size(-1)),
                     target_pos.view(-1)
