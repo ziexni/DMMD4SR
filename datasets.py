@@ -2,32 +2,28 @@ import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-import copy
 
 from utils import neg_sample
 
 
 class RecWithContrastiveLearningDataset(Dataset):
     """
-    학습/평가용 Dataset
-    train : SASRec 스타일 next-item (sliding window)
-    valid : train history → valid 정답, sampled 100-neg
-    test  : train+valid history → test 정답, sampled 100-neg
-    seed 고정 없음 — 베이스라인과 동일
+    train  : (user_id, input_ids, target_pos, answer)  — CrossEntropy용 4-tuple
+    valid  : (seq, candidates, labels)                  — 101-way sampled 평가
+    test   : (seq, candidates, labels)                  — 101-way sampled 평가
     """
 
     def __init__(self, args, user_seq, test_neg_items=None, data_type='train'):
-        self.args            = args
-        self.user_seq        = user_seq   # list of item sequences (0-indexed user)
-        self.test_neg_items  = test_neg_items
-        self.data_type       = data_type
-        self.max_len         = args.max_seq_length
+        self.args           = args
+        self.user_seq       = user_seq
+        self.test_neg_items = test_neg_items
+        self.data_type      = data_type
+        self.max_len        = args.max_seq_length
 
-        # user_train / user_valid / user_test 는 args에서 참조
         self.user_train = args.user_train
         self.user_valid = args.user_valid
         self.user_test  = args.user_test
-        self.itemnum    = args.item_size - 2   # padding/mask 제외한 실제 item 수
+        self.itemnum    = args.item_size - 2   # PAD/MASK 제외 실제 item 수
 
     def __len__(self):
         return len(self.user_seq)
@@ -38,46 +34,36 @@ class RecWithContrastiveLearningDataset(Dataset):
         items = self.user_seq[index]   # 해당 유저의 전체 시퀀스
 
         if self.data_type == 'train':
+            # ── DMMD4SR 원본과 동일한 슬라이싱 ──
             input_ids  = items[:-3]
             target_pos = items[1:-2]
-            answer     = [0]
-
-            seq_set    = set(items)
-            target_neg = [neg_sample(seq_set, self.args.item_size) for _ in input_ids]
+            answer     = [0]   # no use (CrossEntropy는 target_pos로 계산)
 
             pad_len    = self.max_len - len(input_ids)
-            input_ids  = [0] * pad_len + input_ids
-            target_pos = [0] * pad_len + target_pos
-            target_neg = [0] * pad_len + target_neg
-
-            input_ids  = input_ids[-self.max_len:]
-            target_pos = target_pos[-self.max_len:]
-            target_neg = target_neg[-self.max_len:]
+            input_ids  = ([0] * pad_len + input_ids)[-self.max_len:]
+            target_pos = ([0] * pad_len + target_pos)[-self.max_len:]
 
             return (
                 torch.tensor(index,      dtype=torch.long),
                 torch.tensor(input_ids,  dtype=torch.long),
                 torch.tensor(target_pos, dtype=torch.long),
-                torch.tensor(target_neg, dtype=torch.long),
                 torch.tensor(answer,     dtype=torch.long),
             )
 
         else:
-            # valid / test
-            # user_id는 user_seq의 index + 1 (1-based)
-            u = index + 1
+            # ── valid / test : 101-way sampled 평가 ──
+            u = index + 1   # user_train/valid/test는 1-based
 
             if self.data_type == 'valid':
-                history = self.user_train.get(u, [])
+                history  = self.user_train.get(u, [])
                 val_list = self.user_valid.get(u, [])
-                target  = val_list[0] if val_list else None
+                target   = val_list[0] if val_list else None
             else:
-                history = self.user_train.get(u, []) + self.user_valid.get(u, [])
+                history   = self.user_train.get(u, []) + self.user_valid.get(u, [])
                 test_list = self.user_test.get(u, [])
                 target    = test_list[0] if test_list else None
 
             if target is None:
-                # 정답 없는 유저 — 더미 반환
                 seq        = [0] * self.max_len
                 candidates = [1] + [2] * 100
                 labels     = [1]  + [0] * 100
@@ -87,13 +73,13 @@ class RecWithContrastiveLearningDataset(Dataset):
                     torch.tensor(labels,     dtype=torch.long),
                 )
 
-            # 입력 시퀀스
+            # 입력 시퀀스: [history] + [MASK]
             item_seq = history[-(self.max_len - 1):]
             seq      = item_seq + [self.args.mask_id]
             pad_len  = self.max_len - len(seq)
             seq      = [0] * pad_len + seq
 
-            # negative sampling — train 아이템만 제외, seed 없음
+            # 100 negatives — train 아이템만 제외
             rated = set(self.user_train.get(u, []))
             rated.add(0)
             negs = []
