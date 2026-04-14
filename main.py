@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--seed",             default=2024,                    type=int)
 
     # 모델 — DMMD4SR 원본 하이퍼파라미터 복원
-    parser.add_argument("--hidden_size",                  default=128,    type=int)   # ← 원본 64
+    parser.add_argument("--hidden_size",                  default=64,    type=int)   # ← 원본 64
     parser.add_argument("--num_hidden_layers",            default=2,     type=int)
     parser.add_argument("--num_attention_heads",          default=2,     type=int)
     parser.add_argument("--hidden_act",                   default="gelu",type=str)
@@ -65,7 +65,7 @@ def main():
     parser.add_argument("--lr",             default=0.001, type=float)
     parser.add_argument("--batch_size",     default=256,   type=int)
     parser.add_argument("--epochs",         default=200,   type=int)
-    parser.add_argument("--early_stop_num", default=10,    type=int)
+    parser.add_argument("--early_stop_num", default=30,    type=int)
     parser.add_argument("--weight_decay",   default=0.0,   type=float)
 
     args = parser.parse_args()
