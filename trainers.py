@@ -158,7 +158,7 @@ class ICLRecTrainer(Trainer):
                                          seq_emb.unsqueeze(-1)).squeeze(-1) # (B, 101)
 
                     for b in range(scores.size(0)):
-                        rank = (scores[b][0] <= scores[b]).sum().item() - 1
+                        rank = (scores[b][0] < scores[b]).sum().item() - 1
                         pred_list.append(rank)
 
             scores, result_info = self.get_sample_scores(epoch, pred_list, split=split)
