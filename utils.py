@@ -102,15 +102,23 @@ def load_item_features(item_path, title_npy_path):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_metric(pred_list, topk=10):
-    NDCG = HIT = MRR = 0.0
-    for rank in pred_list:
-        MRR += 1.0 / (rank + 1.0)
-        if rank < topk:
-            NDCG += 1.0 / np.log2(rank + 2.0)
-            HIT  += 1.0
-    n = max(len(pred_list), 1)
-    return HIT / n, NDCG / n, MRR / n
+    NDCG, HR, MRR = 0.0, 0.0, 0.0
+    valid_count = 0
 
+    for rank, pred in enumerate(pred_list):
+        # ✅ rank=-1 (target 없음) 케이스 스킵
+        if rank < 0:
+            continue
+
+        valid_count += 1
+        MRR += 1.0 / (rank + 1.0)   # 이제 rank >= 0 보장
+
+        if rank < topk:
+            HR   += 1.0
+            NDCG += 1.0 / np.log2(rank + 2.0)
+
+    n = max(valid_count, 1)
+    return HR / n, NDCG / n, MRR / n
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Early Stopping
